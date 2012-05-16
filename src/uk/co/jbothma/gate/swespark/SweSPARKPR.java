@@ -1,5 +1,7 @@
 package uk.co.jbothma.gate.swespark;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 
@@ -81,9 +83,9 @@ public class SweSPARKPR extends AbstractLanguageAnalyser {
 			tokAnnotList = gate.Utils.inDocumentOrder(tokAnnots);
 			
 			for (Annotation tokAnnot : tokAnnotList) {
-				if (tokAnnot.getFeatures().get(ANNIEConstants.TOKEN_KIND_FEATURE_NAME).equals("word"))
+				if (tokAnnotIsWord(tokAnnot))
 				{
-					word = (String) tokAnnot.getFeatures().get(ANNIEConstants.TOKEN_STRING_FEATURE_NAME);
+					word = tokAnnotString(tokAnnot);
 					pos = (String) tokAnnot.getFeatures().get("category");
 					sentence += word + "/" + pos + " ";
 				}
@@ -91,27 +93,117 @@ public class SweSPARKPR extends AbstractLanguageAnalyser {
 			System.out.println(sentence);
 			chunkerInput[0] = sentence;
 			nounPhrases = chunker.parse_input(chunkerInput);
-			annotatePhrases(tokAnnotList, nounPhrases);
+			for (String phrase : nounPhrases) {
+				System.out.println("  " + phrase);
+			}
+			annotatePhrases(tokAnnotList, Arrays.asList(nounPhrases));
 		}
 	}
-	
-	private void annotatePhrases(List<Annotation> tokAnnotList, String[] nounPhrases) {
-		if (nounPhrases.length > 0) {
-			String[] phraseWords = nounPhrases[0].split(" "); 
-			for (Annotation tokAnnot : tokAnnotList) {
-				if (tokAnnot.getFeatures().get(ANNIEConstants.TOKEN_STRING_FEATURE_NAME)
-						.equals(phraseWords[0])) {
-					System.out.println(nounPhrases[0]);
-					startAnnot(tokAnnot, phraseWords);
+	private void annotatePhrases(List<Annotation> tokAnnotList, List<String> nounPhrases) {
+		int phrasIdx = 0;
+		int phrasWordIdx = 0;
+		int phrasStartIdx = -1, phrasEndIdx = -1;
+		int phrasAdv; // either 0 or 1
+		String[] phrasWords = nounPhrases.get(phrasIdx).split(" ");
+		
+		for (int tokIdx = 0; tokIdx < tokAnnotList.size(); tokIdx++) {
+			if (tokAnnotIsWord(tokAnnotList.get(tokIdx))) {
+				System.out.println("token: " + tokAnnotString(tokAnnotList.get(tokIdx)));
+				if (tokAnnotString(tokAnnotList.get(tokIdx)).equals(phrasWords[phrasWordIdx])) {
+					// current phras word == current sentence word
+					if (phrasWordIdx == 0) {
+						System.out.println("first word match");
+						// if it's the start of a phrase,
+						// note the position in token list
+						phrasStartIdx = tokIdx;
+					}
+					if (phrasWordIdx == (phrasWords.length - 1)) {
+						System.out.println("last word match");
+						// if it's the end of the phrase,
+						// note the position in the token list and annotate the phrase
+						phrasEndIdx = tokIdx;
+						System.out.println(
+								"Phrase " + nounPhrases.get(phrasIdx) + " " + 
+								phrasStartIdx + "-" + phrasEndIdx);
+						
+						if (phrasIdx == (nounPhrases.size() - 1)) {
+							// if it's the end of the phrases, stop
+							return;
+						} else {
+							// otherwise start at the beginning of the next phrase
+							phrasWordIdx = 0;
+							phrasAdv = 0; // overwrite first word advance
+							phrasIdx++;
+							phrasWords = nounPhrases.get(phrasIdx).split(" ");
+						}
+					} else {
+						// if it's in the middle of a phrase, advance the phrase word idx
+						phrasAdv = 1;
+					}
+					phrasWordIdx += phrasAdv;
+				} else {
+					// if the current phrase word != current sentence word,
+					// start at the beginning of the phrase to compare to the next sentence word.
+					phrasWordIdx = 0;
 				}
 			}
 		}
 	}
-	private void startAnnot(Annotation tokAnnot, String[] phraseWords) {
-		System.out.println("Phrase start " + tokAnnot.getStartNode().getOffset() + " " + phraseWords[0]);
+	private boolean tokAnnotIsWord(Annotation tokAnnot) {
+		return tokAnnot.getFeatures().get(ANNIEConstants.TOKEN_KIND_FEATURE_NAME).equals("word");
 	}
+	private String tokAnnotString(Annotation tokAnnot) {
+		return (String) tokAnnot.getFeatures().get(ANNIEConstants.TOKEN_STRING_FEATURE_NAME);
+	}
+//	/**
+//	 * Add noun phrase annotations to corpus.
+//	 * 
+//	 * Advances along token annotations and phrase words,
+//	 * trying to allign phrases to token annotations in the sentence.
+//	 * When an entire phrase can be alligned with a series of tokens,
+//	 * those tokens will be annotated as a noun phrase.
+//	 * 
+//	 * @param tokAnnotList
+//	 * @param nounPhrases
+//	 */
+//	private void annotatePhrases(List<Annotation> tokAnnotList, List<String> nounPhrases) {
+//		Annotation nextTokAnnot;
+//		String nextSentWord, nextPhraseWord;
+//		long phraseStartOffset, phraseEndOffset;
+//		
+//		while (tokAnnotList.size() > 0 && nounPhrases.size() > 0) {
+//			List<String> phraseWordList = Arrays.asList(nounPhrases.get(0).split(" "));
+//			nounPhrases.remove(0);
+//			while (tokAnnotList.size() > 0 && phraseWordList.size() > 0) {
+//				nextTokAnnot = tokAnnotList.get(0);
+//				nextSentWord = (String) nextTokAnnot.getFeatures().get(ANNIEConstants.TOKEN_STRING_FEATURE_NAME);
+//				nextPhraseWord = phraseWordList.get(0);
+//				if (nextSentWord.equals(nextPhraseWord)) {
+//					phraseStartOffset = nextTokAnnot.getStartNode().getOffset();
+//					tokAnnotList.remove(0);					
+//					while (tokAnnotList.size() > 0 && phraseWordList.size() > 0) {
+//						nextTokAnnot = tokAnnotList.get(0);
+//						nextSentWord = (String) nextTokAnnot.getFeatures().get(ANNIEConstants.TOKEN_STRING_FEATURE_NAME);
+//						nextPhraseWord = phraseWordList.get(0);
+//						if (nextSentWord.equals(nextPhraseWord)) {
+//							
+//					}
+//				} else {
+//					tokAnnotList.remove(0);
+//				}
+//			}
+//		}
+////		if (nounPhrases.length > 0) {
+////			String[] phraseWords = nounPhrases[0].split(" "); 
+////			for (Annotation tokAnnot : tokAnnotList) {
+////				if (tokAnnot.getFeatures().get(ANNIEConstants.TOKEN_STRING_FEATURE_NAME)
+////						.equals(phraseWords[0])) {
+////					System.out.println(nounPhrases[0]);
+////					startAnnot(tokAnnot, phraseWords);
+////					nounPhrases.
+////				}
+////			}
+//		}
+//	}
 	
-	private void contAnnot() {
-		
-	}
 }
