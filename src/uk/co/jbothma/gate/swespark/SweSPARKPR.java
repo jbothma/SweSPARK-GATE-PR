@@ -7,7 +7,10 @@ import gate.Factory;
 import gate.creole.ANNIEConstants;
 import gate.creole.AbstractLanguageAnalyser;
 import gate.creole.ExecutionException;
+import gate.creole.metadata.CreoleParameter;
 import gate.creole.metadata.CreoleResource;
+import gate.creole.metadata.Optional;
+import gate.creole.metadata.RunTime;
 
 import java.util.Arrays;
 import java.util.Iterator;
@@ -30,7 +33,7 @@ import chunker.Chunk;
  * for aligning the phrase to the tokens and then annotating the phrase.
  */
 @CreoleResource(name = "SweSPARK Chunker",
-comment = "Chunker that can currently provide Noun Phrase annotations.")
+comment = "Chunker that provides Noun Phrase annotations.")
 public class SweSPARKPR extends AbstractLanguageAnalyser {
 
 	private static final long serialVersionUID = -8974845243152085380L;
@@ -40,15 +43,21 @@ public class SweSPARKPR extends AbstractLanguageAnalyser {
 	public String getinputASname() {
 		return inputASName;
 	}
-
+	
+	@Optional
+	@RunTime
+	@CreoleParameter(comment = "annotation set containing depended-on annotations")
 	public void setInputASname(String inputASname) {
 		this.inputASName = inputASname;
 	}
-
+	
 	public String getoutputASname() {
 		return outputASName;
 	}
 
+	@Optional
+	@RunTime
+	@CreoleParameter(comment = "annotation set in which annotations are created")
 	public void setOutputASname(String outputASname) {
 		this.outputASName = outputASname;
 	}
