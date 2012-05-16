@@ -1,19 +1,34 @@
 package uk.co.jbothma.gate.swespark;
+ 
 
-import java.util.ArrayList;
+import gate.Annotation;
+import gate.AnnotationSet;
+import gate.Factory;
+import gate.creole.ANNIEConstants;
+import gate.creole.AbstractLanguageAnalyser;
+import gate.creole.ExecutionException;
+import gate.creole.metadata.CreoleResource;
+
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 
 import chunker.Chunk;
 
-import gate.creole.AbstractLanguageAnalyser;
-import gate.Annotation;
-import gate.AnnotationSet;
-import gate.creole.ExecutionException;
-import gate.creole.ANNIEConstants;
-import gate.creole.metadata.CreoleResource;
-
+/**
+ * GATE Wrapper for the Java Swe-SPARK NP-chunker.
+ * http://stp.lingfil.uu.se/~bea/resources/spark/
+ * Mirrored at https://github.com/jbothma/Swe-SPARK-Java
+ * 
+ * Expects inputAS to have ANNIEConstants.TOKEN_ANNOTATION_TYPE
+ * and ANNIEConstants.SENTENCE_ANNOTATION_TYPE.
+ * Also expects annotations of type ANNIEConstants.TOKEN_ANNOTATION_TYPE
+ * that have feature ANNIEConstants.TOKEN_KIND_FEATURE_NAME of "word" 
+ * to have a feature "category" which holds the PAROLE POS tag for the string.
+ * 
+ * This took a little bit of inspiration from mark.chunking.GATEWrapper
+ * for aligning the phrase to the tokens and then annotating the phrase.
+ */
 @CreoleResource(name = "SweSPARK Chunker",
 comment = "Chunker that can currently provide Noun Phrase annotations.")
 public class SweSPARKPR extends AbstractLanguageAnalyser {
@@ -26,7 +41,7 @@ public class SweSPARKPR extends AbstractLanguageAnalyser {
 		return inputASName;
 	}
 
-	public void setinputASname(String inputASname) {
+	public void setInputASname(String inputASname) {
 		this.inputASName = inputASname;
 	}
 
@@ -34,52 +49,48 @@ public class SweSPARKPR extends AbstractLanguageAnalyser {
 		return outputASName;
 	}
 
-	public void setoutputASname(String outputASname) {
+	public void setOutputASname(String outputASname) {
 		this.outputASName = outputASname;
 	}
 
 	public void execute() throws ExecutionException {
 		gate.Document doc;
 		String word, pos, sentence;
-		AnnotationSet inputAnnSet, outputAnnSet;
-		Iterator sentIter, tokIter;
+		AnnotationSet inputAS, outputAS;
+		Iterator<Annotation> sentIter;
 		Annotation sentAnnot;
 		Chunk chunker;
-		String[] chunkerInput, nounPhrases, npWords;
-		long sentPos;
+		String[] chunkerInput, nounPhrases;
 		List<Annotation> tokAnnotList;
 		AnnotationSet tokAnnots;
 		
-		System.out.println("SweSPARKPR: starting to execute.");
 		doc = getDocument();
 	    if(doc == null)
 	        throw new ExecutionException("No document to process!");
 
 		chunkerInput = new String[1];
 		chunker = new Chunk();
+	    
+		inputAS = (inputASName == null || inputASName.trim().equals(""))
+				? document.getAnnotations()
+				: doc.getAnnotations(inputASName);				
+		outputAS = (outputASName == null || outputASName.trim().equals(""))
+				? document.getAnnotations()
+        		: doc.getAnnotations(outputASName);
 		
-	    System.out.println("SweSPARKPR: got the document.");
-	    inputASName = outputASName = "Blah";
-		inputAnnSet = (inputASName == null || inputASName.length() == 0)
-				? doc.getAnnotations()
-				: doc.getAnnotations(inputASName);
-
-		outputAnnSet = (outputASName == null || outputASName.length() == 0)
-				? doc.getAnnotations()
-				: doc.getAnnotations(outputASName);
-				
-		System.out.println("Annotation sets: " + doc.getAnnotationSetNames());
-		System.out.println("Blah Annotation types: " + inputAnnSet.getAllTypes());
-
+		assertAnnotationTypes(inputAS, new String[] {
+			ANNIEConstants.SENTENCE_ANNOTATION_TYPE,
+			ANNIEConstants.TOKEN_ANNOTATION_TYPE,
+		});
+			
 		// iterate through the sentences
-		sentIter = inputAnnSet.get(ANNIEConstants.SENTENCE_ANNOTATION_TYPE).iterator();
+		sentIter = inputAS.get(ANNIEConstants.SENTENCE_ANNOTATION_TYPE).iterator();
 
 		while (sentIter.hasNext()) {
 			sentence = "";
 			sentAnnot = (Annotation) sentIter.next();
-			sentPos = sentAnnot.getStartNode().getOffset();
-			System.out.println("SweSPARKPR: new sentence: " + sentAnnot.getStartNode().getOffset() + "-" + sentAnnot.getEndNode().getOffset());
-			tokAnnots = gate.Utils.getContainedAnnotations(inputAnnSet, sentAnnot, ANNIEConstants.TOKEN_ANNOTATION_TYPE);
+			tokAnnots = gate.Utils.getContainedAnnotations(
+					inputAS, sentAnnot, ANNIEConstants.TOKEN_ANNOTATION_TYPE);
 			tokAnnotList = gate.Utils.inDocumentOrder(tokAnnots);
 			
 			for (Annotation tokAnnot : tokAnnotList) {
@@ -90,44 +101,61 @@ public class SweSPARKPR extends AbstractLanguageAnalyser {
 					sentence += word + "/" + pos + " ";
 				}
 			}
-			System.out.println(sentence);
+
 			chunkerInput[0] = sentence;
 			nounPhrases = chunker.parse_input(chunkerInput);
-			for (String phrase : nounPhrases) {
-				System.out.println("  " + phrase);
-			}
-			annotatePhrases(tokAnnotList, Arrays.asList(nounPhrases));
+			
+			alignAndAnnotPhrases(tokAnnotList, Arrays.asList(nounPhrases), outputAS);
 		}
 	}
-	private void annotatePhrases(List<Annotation> tokAnnotList, List<String> nounPhrases) {
+	
+	/**
+	 * Align the phrases to a given sentence and add annotations to corpus.
+	 * 
+	 * This is called once per sentence. 
+	 */
+	private void alignAndAnnotPhrases(
+			List<Annotation> tokAnnotList,
+			List<String> nounPhrases,
+			AnnotationSet outputAS) {
 		int phrasIdx = 0;
 		int phrasWordIdx = 0;
 		int phrasStartIdx = -1, phrasEndIdx = -1;
 		int phrasAdv; // either 0 or 1
-		String[] phrasWords = nounPhrases.get(phrasIdx).split(" ");
+		String[] phrasWords;
 		
+		/*
+		 * Advance along tokens within the sentence, ignoring non-word tokens.
+		 * 
+		 * Maintain an index to the current phrase in the set of phrases
+		 * and another index to the current word in the words in the current phrase.
+		 * 
+		 * While a phrase matches a series of tokens, advance the word index.
+		 * If the whole phrase matches, annotate the phrase in the corpus.
+		 * If part of the phrase doesn't match, continue along the sentence while
+		 * starting at the beginning of the phrase - this is assuming that
+		 * the beginning of the phrase matched but the phrase really occurs later 
+		 * in the sentence
+		 */
+		phrasWords = nounPhrases.get(phrasIdx).split(" ");
 		for (int tokIdx = 0; tokIdx < tokAnnotList.size(); tokIdx++) {
 			if (tokAnnotIsWord(tokAnnotList.get(tokIdx))) {
-				System.out.println("token: " + tokAnnotString(tokAnnotList.get(tokIdx)));
 				if (tokAnnotString(tokAnnotList.get(tokIdx)).equals(phrasWords[phrasWordIdx])) {
 					// current phras word == current sentence word
 					if (phrasWordIdx == 0) {
-						System.out.println("first word match");
 						// if it's the start of a phrase,
 						// note the position in token list
 						phrasStartIdx = tokIdx;
 					}
 					if (phrasWordIdx == (phrasWords.length - 1)) {
-						System.out.println("last word match");
 						// if it's the end of the phrase,
 						// note the position in the token list and annotate the phrase
 						phrasEndIdx = tokIdx;
-						System.out.println(
-								"Phrase " + nounPhrases.get(phrasIdx) + " " + 
-								phrasStartIdx + "-" + phrasEndIdx);
+						
+						annotate(outputAS, tokAnnotList, phrasStartIdx, phrasEndIdx);
 						
 						if (phrasIdx == (nounPhrases.size() - 1)) {
-							// if it's the end of the phrases, stop
+							// if it's the end of the phrases, stop with this sentence
 							return;
 						} else {
 							// otherwise start at the beginning of the next phrase
@@ -149,61 +177,33 @@ public class SweSPARKPR extends AbstractLanguageAnalyser {
 			}
 		}
 	}
+	
+	private void annotate(AnnotationSet outputAS, List<Annotation> tokAnnotList, int startIdx, int endIdx) {
+		Annotation startTokAnnot = tokAnnotList.get(startIdx);
+		Annotation endTokAnnot = tokAnnotList.get(endIdx);
+
+		outputAS.add(
+				startTokAnnot.getStartNode(),
+				endTokAnnot.getEndNode(),
+				"NounPhrase",
+				Factory.newFeatureMap()
+		);
+	}
+	
 	private boolean tokAnnotIsWord(Annotation tokAnnot) {
 		return tokAnnot.getFeatures().get(ANNIEConstants.TOKEN_KIND_FEATURE_NAME).equals("word");
 	}
+	
 	private String tokAnnotString(Annotation tokAnnot) {
 		return (String) tokAnnot.getFeatures().get(ANNIEConstants.TOKEN_STRING_FEATURE_NAME);
 	}
-//	/**
-//	 * Add noun phrase annotations to corpus.
-//	 * 
-//	 * Advances along token annotations and phrase words,
-//	 * trying to allign phrases to token annotations in the sentence.
-//	 * When an entire phrase can be alligned with a series of tokens,
-//	 * those tokens will be annotated as a noun phrase.
-//	 * 
-//	 * @param tokAnnotList
-//	 * @param nounPhrases
-//	 */
-//	private void annotatePhrases(List<Annotation> tokAnnotList, List<String> nounPhrases) {
-//		Annotation nextTokAnnot;
-//		String nextSentWord, nextPhraseWord;
-//		long phraseStartOffset, phraseEndOffset;
-//		
-//		while (tokAnnotList.size() > 0 && nounPhrases.size() > 0) {
-//			List<String> phraseWordList = Arrays.asList(nounPhrases.get(0).split(" "));
-//			nounPhrases.remove(0);
-//			while (tokAnnotList.size() > 0 && phraseWordList.size() > 0) {
-//				nextTokAnnot = tokAnnotList.get(0);
-//				nextSentWord = (String) nextTokAnnot.getFeatures().get(ANNIEConstants.TOKEN_STRING_FEATURE_NAME);
-//				nextPhraseWord = phraseWordList.get(0);
-//				if (nextSentWord.equals(nextPhraseWord)) {
-//					phraseStartOffset = nextTokAnnot.getStartNode().getOffset();
-//					tokAnnotList.remove(0);					
-//					while (tokAnnotList.size() > 0 && phraseWordList.size() > 0) {
-//						nextTokAnnot = tokAnnotList.get(0);
-//						nextSentWord = (String) nextTokAnnot.getFeatures().get(ANNIEConstants.TOKEN_STRING_FEATURE_NAME);
-//						nextPhraseWord = phraseWordList.get(0);
-//						if (nextSentWord.equals(nextPhraseWord)) {
-//							
-//					}
-//				} else {
-//					tokAnnotList.remove(0);
-//				}
-//			}
-//		}
-////		if (nounPhrases.length > 0) {
-////			String[] phraseWords = nounPhrases[0].split(" "); 
-////			for (Annotation tokAnnot : tokAnnotList) {
-////				if (tokAnnot.getFeatures().get(ANNIEConstants.TOKEN_STRING_FEATURE_NAME)
-////						.equals(phraseWords[0])) {
-////					System.out.println(nounPhrases[0]);
-////					startAnnot(tokAnnot, phraseWords);
-////					nounPhrases.
-////				}
-////			}
-//		}
-//	}
 	
+	private void assertAnnotationTypes(AnnotationSet annSet, String[] annTypes) throws ExecutionException {
+		for (String annType : annTypes) {
+			if (!annSet.getAllTypes().contains(annType))
+				throw new ExecutionException(
+						"Missing required Annotation Type " + annType + 
+						" in Annotation Set " + annSet.getName());
+		}
+	}
 }

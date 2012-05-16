@@ -17,13 +17,11 @@ public class Demo {
 	public static void main(String[] args) throws GateException, MalformedURLException {
 		Gate.init();
 		Gate.getCreoleRegister().registerDirectories(
-	            new File("/home/jdb/workspace/MorphP").toURI().toURL());
-		Gate.getCreoleRegister().registerDirectories(
 	            new File(System.getProperty("user.dir")).toURI().toURL());
-		System.out.println(System.getProperty("user.dir"));
 		
 		// get the datastore
-		SerialDataStore dataStore = (SerialDataStore) Factory.openDataStore("gate.persist.SerialDataStore", "file:///" + dataStorePath);
+		SerialDataStore dataStore = (SerialDataStore) 
+				Factory.openDataStore("gate.persist.SerialDataStore", "file:///" + dataStorePath);
 		dataStore.open();
 		System.out.println("Demo: opened datastore.");
 		
@@ -33,22 +31,29 @@ public class Demo {
 		corpFeatures.put(DataStore.LR_ID_FEATURE_NAME, corpusID);
 		corpFeatures.put(DataStore.DATASTORE_FEATURE_NAME, dataStore);
 		//tell the factory to load the Serial Corpus with the specified ID from the specified  datastore
-		gate.Corpus corpus = (gate.Corpus)Factory.createResource("gate.corpora.SerialCorpusImpl", corpFeatures);
+		gate.Corpus corpus = (gate.Corpus)
+				Factory.createResource("gate.corpora.SerialCorpusImpl", corpFeatures);
 		System.out.println("Demo: got the corpus.");
 		
 		// setup the pipeline
 		SerialAnalyserController pipeline = (SerialAnalyserController)Factory
 	            .createResource("gate.creole.SerialAnalyserController");
-//		pipeline.add((gate.LanguageAnalyser)Factory
-//	              .createResource("sheffield.creole.morph.Morpher"));
-		pipeline.add((gate.LanguageAnalyser)Factory
-	              .createResource("uk.co.jbothma.gate.swespark.SweSPARKPR"));
+		SweSPARKPR chunkPR = (SweSPARKPR)Factory
+	              .createResource("uk.co.jbothma.gate.swespark.SweSPARKPR");
+		chunkPR.setInputASname("OntPreprocess");
+		chunkPR.setOutputASname("OntPreprocess");
+		pipeline.add(chunkPR);
 		pipeline.setCorpus(corpus);
 		System.out.println("Demo: pipeline is ready.");
 		
 		// execute the pipeline
 		pipeline.execute();
 		System.out.println("Demo: pipeline is executed.");
+		
+		gate.Corpus persistCorpus = null;
+		persistCorpus = (gate.Corpus) dataStore.adopt(corpus,null);
+		dataStore.sync(persistCorpus);
+		System.out.println("Demo: saved the corpus.");
 	}
 
 }
